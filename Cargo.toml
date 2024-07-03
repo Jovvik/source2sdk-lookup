@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.80"
-regex = "1.10.3"
 dotenv = "0.15.0"
 dotenv_codegen = "0.15.0"
-lazy_static = "1.4.0"
 colored = "2.0.0"
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.120"
