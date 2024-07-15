@@ -23,7 +23,7 @@ cp .env.example .env
 ```
 3. Open the `.env` file in a text editor and specify the path to your `client.hpp` file.
 ```bash
-SCHEMA_JSON="/path/to/your/schema.json"
+SCHEMA_DIR="/path/to/dir/with/jsons"
 ```
 4. Save `.env` with the updated path.
 

@@ -5,7 +5,9 @@ use dotenv_codegen::dotenv;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
-    io::{stdin, stdout, Write},
+    fs::File,
+    io::{stdin, stdout, BufReader, Write},
+    path::Path,
 };
 
 #[derive(Debug, Deserialize)]
@@ -13,29 +15,57 @@ struct Sdk {
     #[serde(flatten)]
     type_scopes: HashMap<String, TypeScope>,
 }
+impl Sdk {
+    fn from_path(path: &Path) -> Result<Self> {
+        let mut type_scopes = HashMap::new();
+        for type_scope_path in path.read_dir()? {
+            let type_scope_path = type_scope_path?.path();
+            println!("loading {}", type_scope_path.display());
+            let file = File::open(type_scope_path)?;
+            let reader = BufReader::new(file);
+            let sdk: Sdk = serde_json::from_reader(reader)?;
+            type_scopes.extend(sdk.type_scopes);
+        }
+        Ok(Self { type_scopes })
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct TypeScope {
-    #[serde(flatten)]
     classes: HashMap<String, Class>,
 }
 
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 struct Class {
-    #[serde(flatten)]
-    fields: HashMap<String, Field>,
+    fields: HashMap<String, usize>,
+    metadata: Vec<ClassMetadata>,
+}
+impl Class {
+    fn get_field_type(&self, name: &str) -> Option<String> {
+        self.metadata
+            .iter()
+            .filter_map(|metadata| match metadata {
+                ClassMetadata::NetworkVarNames { name: n, type_name } if n == name => {
+                    Some(type_name.clone())
+                }
+                _ => None,
+            })
+            .next()
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-struct Field {
-    offset: usize,
-    type_: String,
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
+enum ClassMetadata {
+    Unknown { name: String },
+    NetworkChangeCallback { name: String },
+    NetworkVarNames { name: String, type_name: String },
 }
 
 #[derive(Debug)]
 struct FieldEntry {
     name: String,
-    type_: String,
+    type_: Option<String>,
     class_name: String,
     type_scope_name: String,
 }
@@ -44,13 +74,13 @@ fn make_offset_to_fields(sdk: &Sdk) -> HashMap<usize, Vec<FieldEntry>> {
     let mut offset_to_fields = HashMap::new();
     for (type_scope_name, type_scope) in &sdk.type_scopes {
         for (class_name, class) in &type_scope.classes {
-            for (field_name, field) in &class.fields {
+            for (field_name, offset) in &class.fields {
                 offset_to_fields
-                    .entry(field.offset)
+                    .entry(*offset)
                     .or_insert_with(Vec::new)
                     .push(FieldEntry {
                         name: field_name.clone(),
-                        type_: field.type_.clone(),
+                        type_: class.get_field_type(field_name),
                         class_name: class_name.clone(),
                         type_scope_name: type_scope_name.clone(),
                     });
@@ -80,7 +110,11 @@ fn run_interactive_loop(offset_to_fields: &HashMap<usize, Vec<FieldEntry>>) -> R
                     for field in fields {
                         println!(
                             "{} {}{}{} ({})",
-                            field.type_.purple(),
+                            field
+                                .type_
+                                .as_ref()
+                                .map(|type_| type_.purple())
+                                .unwrap_or("Unknown type".red()),
                             field.class_name.yellow(),
                             "::".dimmed(),
                             field.name,
@@ -100,8 +134,8 @@ fn run_interactive_loop(offset_to_fields: &HashMap<usize, Vec<FieldEntry>>) -> R
 }
 
 fn main() -> Result<()> {
-    let path = dotenv!("SCHEMA_JSON");
-    let sdk: Sdk = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+    let path = Path::new(dotenv!("SCHEMA_DIR"));
+    let sdk = Sdk::from_path(path)?;
     let offset_to_fields = make_offset_to_fields(&sdk);
     run_interactive_loop(&offset_to_fields)?;
     Ok(())
